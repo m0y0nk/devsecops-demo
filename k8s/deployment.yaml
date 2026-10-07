@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: session17-python
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: session17-python
+  template:
+    metadata:
+      labels:
+        app: session17-python
+    spec:
+      containers:
+        - name: session17-python
+          image: m0y0nk/devsecops-homework:1.0
+          imagePullPolicy: Always           # pull from Docker Hub
+          ports:
+            - containerPort: 5001
