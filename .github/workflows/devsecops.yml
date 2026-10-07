@@ -108,17 +108,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 
-  # ========================================
-  # STEP 4 — Build Docker Image
-  #          (only runs after steps 1, 2, 3 pass)
-  # ========================================
-
-  docker-build:
-    name: Docker Build
+  # Build, scan, and publish the same image from one runner.
+  build-scan-push:
+    name: Build, Scan, and Push
     needs:
       - test
       - sast
       - sca
+      - secret-scan
     runs-on: ubuntu-latest
 
     steps:
@@ -128,27 +125,7 @@ jobs:
 
       - name: Build Docker image
         run: |
-          docker build -t session17-python:${{ github.sha }} .
-
-
-  # ========================================
-  # STEP 5 — Scan Docker Image for vulnerabilities
-  # ========================================
-
-  image-scan:
-    name: Image Scan - Trivy
-    needs:
-      - docker-build
-    runs-on: ubuntu-latest
-
-    steps:
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Build Docker image
-        run: |
-          docker build -t session17-python:${{ github.sha }} .
+          docker build --pull -t m0y0nk/devsecops-homework:${{ github.sha }} .
 
       - name: Install Trivy
         run: |
@@ -161,55 +138,35 @@ jobs:
 
       - name: Scan image
         run: |
-          trivy image --severity HIGH,CRITICAL --exit-code 1 session17-python:${{ github.sha }}
-
-
-  # ========================================
-  # STEP 6 — Push image to Docker Hub
-  # ========================================
-
-  push:
-    name: Push Image to Docker Hub
-    needs:
-      - image-scan
-    runs-on: ubuntu-latest
-
-    steps:
-
-      - name: Checkout code
-        uses: actions/checkout@v4
+          trivy image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 m0y0nk/devsecops-homework:${{ github.sha }}
 
       - name: Login to Docker Hub
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: docker/login-action@v3
         with:
           username: m0y0nk
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and tag image
+      - name: Tag image as latest
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          docker build \
-            -t m0y0nk/hey-cicd:${{ github.sha }} \
-            -t m0y0nk/hey-cicd:latest \
-            .
+          docker tag m0y0nk/devsecops-homework:${{ github.sha }} m0y0nk/devsecops-homework:latest
 
       - name: Push image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          docker push m0y0nk/hey-cicd:${{ github.sha }}
-          docker push m0y0nk/hey-cicd:latest
-
+          docker push m0y0nk/devsecops-homework:${{ github.sha }}
+          docker push m0y0nk/devsecops-homework:latest
 
   # ========================================
-  # STEP 7 — Deploy to Kubernetes
-  #          (only runs on push to main)
+  # Deploy only after successful checks and image publication.
   # ========================================
 
   deploy:
     name: Deploy to Kubernetes
     needs:
-      - push
+      - build-scan-push
     runs-on: ubuntu-latest
-
-    # Skip this step on pull requests — only deploy real merges to main
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
@@ -232,16 +189,25 @@ jobs:
 
       - name: Check rollout status
         run: |
-          kubectl rollout status deployment/session17-python --timeout=60s
+          kubectl rollout status deployment/session17-python --timeout=120s
+          kubectl get deployment session17-python
+          kubectl get pods -l app=session17-python
 
       - name: Test running website in CI (Curl)
         run: |
-          # Forward the service port to the GitHub runner in the background
-          kubectl port-forward service/session17-python 5001:80 &
-          sleep 3
-          
-          echo "🌐 Fetching the website HTML..."
-          curl -s http://localhost:5001 | head -n 15
-          
-          echo -e "\n\n🌐 Fetching the API status..."
-          curl -s http://localhost:5001/api/status
+          kubectl port-forward service/session17-python 5001:80 > /tmp/devsecops-port-forward.log 2>&1 &
+          port_forward_pid=$!
+          trap 'kill "$port_forward_pid" 2>/dev/null || true' EXIT
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://localhost:5001/health; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              cat /tmp/devsecops-port-forward.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+          curl --fail --silent http://localhost:5001/api/status

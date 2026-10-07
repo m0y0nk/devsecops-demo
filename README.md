@@ -46,8 +46,8 @@ hey-cicd/
 ### Step 1 — Clone the repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/hey-cicd.git
-cd hey-cicd
+git clone https://github.com/m0y0nk/devsecops-demo.git
+cd devsecops-demo
 ```
 
 ### Step 2 — Create a virtual environment
@@ -161,41 +161,33 @@ docker run -d -p 5001:5001 hey-cicd:latest
 
 ## ⚙️ Method 3 — CI/CD Pipeline (GitHub Actions)
 
-The pipeline runs automatically every time you push code to `main` or open a pull request.
+The pipeline runs on pushes and pull requests targeting `main`. Tests, CodeQL,
+dependency audit, and Gitleaks run before the image is built and scanned.
+Publishing and deployment run only on pushes to `main`.
 
 ### Pipeline Stages
 
 ```
-Push to GitHub
+Push or pull request to main
       │
-      ▼
-┌─────────────────┐
-│  STEP 1: Tests  │  pytest — runs all 8 unit tests
-└────────┬────────┘
-         │
-┌────────▼────────┐
-│  STEP 2: SAST   │  CodeQL — scans code for security issues
-└────────┬────────┘
-         │
-┌────────▼────────┐
-│   STEP 3: SCA   │  pip-audit — checks for vulnerable packages
-└────────┬────────┘
-         │ (all 3 must pass)
-┌────────▼────────┐
-│  STEP 4: Build  │  docker build — creates the Docker image
-└────────┬────────┘
-         │
-┌────────▼────────┐
-│  STEP 5: Scan   │  Trivy — scans the Docker image for CVEs
-└────────┬────────┘
-         │
-┌────────▼────────┐
-│  STEP 6: Push   │  Pushes image to GitHub Container Registry
-└────────┬────────┘
-         │ (only on push to main)
-┌────────▼────────┐
-│ STEP 7: Deploy  │  kubectl apply → deploys to Kubernetes
-└─────────────────┘
+      ├─ Tests ─┐
+      ├─ CodeQL ├─ Run in parallel; all must pass
+      ├─ pip-audit
+      └─ Gitleaks
+             │
+             ▼
+      Build Docker image
+             │
+             ▼
+      Trivy vulnerability gate
+             │
+             ├─ Pull request: finish without publish
+             │
+             └─ Push to main:
+                    Push scanned image to Docker Hub
+                              │
+                              ▼
+                    Deploy to temporary Kind cluster
 ```
 
 ### How to trigger the pipeline
@@ -215,18 +207,23 @@ Go to **GitHub repo → Settings → Secrets and variables → Actions** and add
 
 | Secret Name | Value |
 |-------------|-------|
-| `KUBECONFIG` | Contents of your `~/.kube/config` file (needed for Step 7 deploy) |
+| `DOCKERHUB_TOKEN` | Docker Hub access token used to publish images |
 
-> ℹ️ `GITHUB_TOKEN` is automatically provided by GitHub — you don't need to add it manually.
+`GITHUB_TOKEN` is automatically provided by GitHub for CodeQL and Gitleaks.
+The deployment job creates a temporary Kind cluster in GitHub Actions; it does
+not deploy to a cluster on your computer.
 
 ### View your Docker image after push
 
-After Step 6 runs, your image is available at:
+After a successful push to `main`, your image is available at:
 ```
-ghcr.io/YOUR_USERNAME/hey-cicd:latest
+m0y0nk/devsecops-homework:latest
 ```
 
-Go to **GitHub repo → Packages** to see it.
+Open the `devsecops-homework` repository in Docker Hub to see it. The workflow
+pushes both `latest` and the commit-SHA tag. Pull requests run checks and scan,
+but do not publish or deploy. The Docker Hub repository must be public for the
+temporary Kubernetes cluster to pull the image.
 
 ---
 
@@ -241,9 +238,13 @@ Go to **GitHub repo → Packages** to see it.
 ### Step 1 — Apply the manifests
 
 ```bash
-kubectl apply -f k8s/deployment.yaml
+sed 's|__IMAGE_TAG__|latest|g' k8s/deployment.yaml > /tmp/devsecops-homework-deployment.yaml
+kubectl apply -f /tmp/devsecops-homework-deployment.yaml
 kubectl apply -f k8s/service.yaml
 ```
+
+This assumes the Docker Hub repository is public and the `latest` image has
+already been published. The pipeline substitutes the commit SHA automatically.
 
 ### Step 2 — Check the pods are running
 
@@ -283,11 +284,12 @@ kubectl delete -f k8s/service.yaml
 | Concept | Tool Used | Where |
 |---------|-----------|-------|
 | **Unit Testing** | pytest + pytest-cov | `tests/test_app.py` |
-| **SAST** (Static Application Security Testing) | GitHub CodeQL | Pipeline Step 2 |
-| **SCA** (Software Composition Analysis) | pip-audit | Pipeline Step 3 |
+| **SAST** (Static Application Security Testing) | GitHub CodeQL | Security checks job |
+| **SCA** (Software Composition Analysis) | pip-audit | Security checks job |
+| **Secret Scanning** | Gitleaks | Security checks job |
 | **Containerisation** | Docker | `Dockerfile` |
-| **Container Image Scanning** | Trivy | Pipeline Step 5 |
-| **Container Registry** | GitHub Container Registry (GHCR) | Pipeline Step 6 |
+| **Container Image Scanning** | Trivy | Build/scan/push job |
+| **Container Registry** | Docker Hub | Build/scan/push job |
 | **Orchestration** | Kubernetes | `k8s/` folder |
 | **CI/CD Automation** | GitHub Actions | `.github/workflows/devsecops.yml` |
 

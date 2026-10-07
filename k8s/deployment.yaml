@@ -12,9 +12,31 @@ spec:
       labels:
         app: session17-python
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: session17-python
-          image: m0y0nk/devsecops-homework:1.0
-          imagePullPolicy: Always           # pull from Docker Hub
+          image: m0y0nk/devsecops-homework:__IMAGE_TAG__
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
           ports:
             - containerPort: 5001
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5001
+            initialDelaySeconds: 10
+            periodSeconds: 20
