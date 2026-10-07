@@ -190,6 +190,12 @@ Push or pull request to main
                     Deploy to temporary Kind cluster
 ```
 
+The runtime image uses the Python 3.12 Alpine image, installs only
+the application requirements, and runs as a non-root numeric user. The workflow
+uses `docker build --pull` and scans that same commit-tagged image before any
+registry push. Keep the HIGH/CRITICAL Trivy threshold enabled; if it fails,
+review the findings and update affected components before publishing.
+
 ### How to trigger the pipeline
 
 ```bash

@@ -1,4 +1,4 @@
-FROM python:3.12-slim-bookworm
+FROM python:3.12-alpine3.22
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -6,23 +6,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get upgrade -y --no-install-recommends \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk upgrade --no-cache
 
 COPY requirements.txt .
 
-RUN python -m pip install --upgrade pip setuptools wheel \
-    && pip install -r requirements.txt
+RUN python -m pip install --no-cache-dir --no-compile -r requirements.txt
 
 COPY app ./app
 
-RUN groupadd --system appgroup \
-    && useradd --system --gid appgroup --create-home --home-dir /home/appuser appuser \
-    && chown -R appuser:appgroup /app
-
-USER appuser
+USER 10001:10001
 
 EXPOSE 5001
 
